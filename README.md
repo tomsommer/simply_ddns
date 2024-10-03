@@ -6,7 +6,7 @@ When it runs it will check if your domain has changed since the last time it ran
 It uses the [simply.com](https://www.simply.com/en/docs/api/) DDNS API to update the records.
 
 ## Configuration
-Copy config.example.json and name it config.json. Replace account and `apikey` with your account id and API Key which you can find in the administration section in your simply.com control panel.
+Inside the config folder, copy config.example.json and name it config.json. Replace account and `apikey` with your account id and API Key which you can find in the administration section in your simply.com control panel.
 
 Then add your records and domains that you want to dynamically update. Each domain is added as a key with a list of records for that domain that is should update.
 
@@ -19,27 +19,24 @@ Example
     ]
 }
 ```
+## Run it using Node
+After you have created your [config.json](##Configuration) and have node 18 install you can run the app directly using npm, `npm run app`.
 
-## How to run
-You can either run it locally using node js or run it as a container.
+## Run it using Docker or Podman
+You have to create your [config.json](##Configuration) in a folder that you mount as a volume in the container, *called config in this example.*
 
-### Using node
-```bash
-# Install depencies
-npm install --omit-dev
-node app.js
-```
-### Using docker
-You have to create your [config.json](##Configuration) in a folder that you mount as a volume in the container, called config in this example.
-
+>**Docker**<br>
 `docker run -v "$PWD/config:/app/config" chrisode/simply_ddns:latest`
+
+>**Podman**<br>
+`podman run -v "$PWD/config:/app/config" chrisode/simply_ddns:latest`
 
 ### Using docker-compose
 ```yaml
-version: '3'
+version: "3"
 services:
   app:
-    build: .
+    image: "chrisode/simply_ddns"
     volumes:
       - "./config:/app/config"
 ```

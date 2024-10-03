@@ -1,11 +1,11 @@
 {
   "name": "simply_ddns",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "A cli tool to dynamically update dns records at simply.com",
   "main": "app.js",
   "type": "module",
   "scripts": {
-    "app": "node app.js",
+    "app": "npm install --omit-dev && node app.js",
     "test": "mocha test && eslint ."
   },
   "keywords": [
