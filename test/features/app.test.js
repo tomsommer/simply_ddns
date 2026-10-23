@@ -2,6 +2,7 @@ import nock from "nock";
 import { readFile, writeFile, unlink } from "fs/promises";
 
 import app from "../../app.js";
+import { updateHostnames } from "../../lib/simplyApi.js";
 
 Feature("Update simply dns records", () => {
   const configFilePath = "./config/config.json";
@@ -16,6 +17,7 @@ Feature("Update simply dns records", () => {
   });
 
   afterEachScenario(async () => {
+    nock.cleanAll();
     if (orgConfigFile) {
       await writeFile(configFilePath, orgConfigFile);
     } else {
@@ -37,11 +39,21 @@ Feature("Update simply dns records", () => {
     await writeFile(configFilePath, JSON.stringify(config));
   }
 
+  function captureErrors() {
+    const errors = [];
+    const orgConsoleError = console.error; // eslint-disable-line no-console
+    console.error = (...args) => errors.push(args.join(" ")); // eslint-disable-line no-console
+    errors.restore = () => {
+      console.error = orgConsoleError; // eslint-disable-line no-console
+    };
+    return errors;
+  }
+
   Scenario("First time update of all dns records for specified domains", () => {
     let fakeIPApi, fakeSimplyAPI;
     let calledPath = "", headers = {};
 
-    When("Configfile exists", fakeConfig);
+    When("Configfile exists", () => fakeConfig());
 
     And("ip file with previos IP doesnt exists", async () => {
       try {
@@ -50,13 +62,17 @@ Feature("Update simply dns records", () => {
     });
 
     And("Simply api is available", async () => {
-      fakeSimplyAPI = nock("https://api.simply.com");
+      fakeSimplyAPI = nock("https://ddns.simply.com");
 
-      await fakeSimplyAPI.post("/2/ddns/").query(true).reply(201, function (path) {
+      await fakeSimplyAPI.get("/nic/update").query({
+        hostname: "kaka.example.com",
+        domain: "example.com",
+        myip: "96.69.96.69",
+      }).reply(200, function (path) {
         calledPath = path;
         headers = this.req.headers;
 
-        return "OK";
+        return "good 96.69.96.69";
       });
     });
 
@@ -78,7 +94,7 @@ Feature("Update simply dns records", () => {
     });
 
     And("It should have updated the correct domain", () => {
-      expect(calledPath).to.equal("/2/ddns/?domain=example.com&hostname=kaka.example.com");
+      expect(calledPath).to.equal("/nic/update?hostname=kaka.example.com&domain=example.com&myip=96.69.96.69");
     });
 
     And("It should have provided basic auth headers", () => {
@@ -98,7 +114,7 @@ Feature("Update simply dns records", () => {
   Scenario("Update domains when IP has changed", () => {
     let fakeIPApi, fakeSimplyAPI;
 
-    When("Configfile exists", fakeConfig);
+    When("Configfile exists", () => fakeConfig());
 
     And("ip file with previos IP does exist", async () => {
       try {
@@ -107,8 +123,12 @@ Feature("Update simply dns records", () => {
     });
 
     And("Simply api is available", async () => {
-      fakeSimplyAPI = nock("https://api.simply.com");
-      await fakeSimplyAPI.post("/2/ddns/").query(true).reply(201, "OK");
+      fakeSimplyAPI = nock("https://ddns.simply.com");
+      await fakeSimplyAPI.get("/nic/update").query({
+        hostname: "kaka.example.com",
+        domain: "example.com",
+        myip: "92.69.96.69",
+      }).reply(200, "good 92.69.96.69");
     });
 
     And("IP API is available", async () => {
@@ -124,8 +144,8 @@ Feature("Update simply dns records", () => {
       expect(fakeIPApi.isDone()).to.be.true;
     });
 
-    And("Simply api should have been called", () => {
-      expect(fakeIPApi.isDone()).to.be.true;
+    And("Simply api should have been called with the new IP", () => {
+      expect(fakeSimplyAPI.isDone()).to.be.true;
     });
 
     And("It should have updated the IP in the .ip file", async () => {
@@ -141,7 +161,7 @@ Feature("Update simply dns records", () => {
   Scenario("Domains should not be updated if ip hasnt changed", () => {
     let fakeIPApi, fakeSimplyAPI;
 
-    When("Configfile exists", fakeConfig);
+    When("Configfile exists", () => fakeConfig());
 
     And("ip file with previos IP does exist", async () => {
       try {
@@ -150,8 +170,8 @@ Feature("Update simply dns records", () => {
     });
 
     And("Simply api is available", async () => {
-      fakeSimplyAPI = nock("https://api.simply.com");
-      await fakeSimplyAPI.post("/2/ddns/").query(true).reply(201, "OK");
+      fakeSimplyAPI = nock("https://ddns.simply.com");
+      await fakeSimplyAPI.get("/nic/update").query(true).reply(200, "good 96.69.96.69");
     });
 
     And("IP API is available", async () => {
@@ -169,6 +189,68 @@ Feature("Update simply dns records", () => {
 
     And("Simply api should not have been called", () => {
       expect(fakeSimplyAPI.isDone()).to.not.be.true;
+    });
+  });
+
+  Scenario("All hostnames of a domain are updated in one request and missing records are reported", () => {
+    let fakeSimplyAPI, errors;
+
+    When("Configfile exists", () => fakeConfig());
+
+    And("Simply api is available and bar.example.com has no record", async () => {
+      fakeSimplyAPI = nock("https://ddns.simply.com");
+      await fakeSimplyAPI.get("/nic/update").query({
+        hostname: "foo.example.com,bar.example.com",
+        domain: "example.com",
+        myip: "96.69.96.69",
+      }).reply(200, "good 96.69.96.69\nnohost");
+    });
+
+    Then("both hostnames are updated", async () => {
+      errors = captureErrors();
+      try {
+        await updateHostnames("example.com", [ "foo.example.com", "bar.example.com" ], "96.69.96.69");
+      } finally {
+        errors.restore();
+      }
+    });
+
+    And("Simply api should have been called once for both hostnames", () => {
+      expect(fakeSimplyAPI.isDone()).to.be.true;
+    });
+
+    And("It should have reported that the record for bar.example.com must be created first", () => {
+      expect(errors).to.have.lengthOf(1);
+      expect(errors[0]).to.include("bar.example.com").and.include("Create the record first");
+    });
+  });
+
+  Scenario("More than 20 hostnames are split into several requests", () => {
+    let fakeSimplyAPI;
+    const hostnames = Array.from({ length: 21 }, (_, index) => `host${index}.example.com`);
+
+    When("Configfile exists", () => fakeConfig());
+
+    And("Simply api is available", async () => {
+      fakeSimplyAPI = nock("https://ddns.simply.com");
+      await fakeSimplyAPI.get("/nic/update").query({
+        hostname: hostnames.slice(0, 20).join(","),
+        domain: "example.com",
+        myip: "96.69.96.69",
+      }).reply(200, Array(20).fill("good 96.69.96.69").join("\n"));
+      await fakeSimplyAPI.get("/nic/update").query({
+        hostname: hostnames[20],
+        domain: "example.com",
+        myip: "96.69.96.69",
+      }).reply(200, "good 96.69.96.69");
+    });
+
+    Then("all hostnames are updated", async () => {
+      await updateHostnames("example.com", hostnames, "96.69.96.69");
+    });
+
+    And("Simply api should have been called twice", () => {
+      expect(fakeSimplyAPI.isDone()).to.be.true;
     });
   });
 });
